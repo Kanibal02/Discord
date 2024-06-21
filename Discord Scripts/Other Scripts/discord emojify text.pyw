@@ -2,7 +2,13 @@ import tkinter as tk
 
 def convert_text(event):
     input_text = input_box.get("1.0", tk.END).strip().lower()
-    output_text = " ".join([f":regional_indicator_{char}:" if char.isalpha() else "     " for char in input_text])
+    output_text = " ".join([
+        f":regional_indicator_{char}:" if char.isalpha() else
+        f":number_{char}:" if char.isdigit() else
+        ":grey_exclamation:" if char == "!" else
+        ":grey_question:" if char == "?" else
+        "     " for char in input_text
+    ])
     output_box.config(state=tk.NORMAL)
     output_box.delete("1.0", tk.END)
     output_box.insert(tk.END, output_text)
@@ -11,9 +17,9 @@ def convert_text(event):
 def copy_to_clipboard():
     output_text = output_box.get("1.0", tk.END).strip()
     if output_text:
-        root.clipboard_clear()
+        root.clipboard_clear()  # Clear the clipboard
         root.clipboard_append(output_text)
-        root.update()  # Now it stays on the clipboard after the window is closed
+        root.update()  # Ensure it stays on the clipboard
 
 root = tk.Tk()
 root.title("Text Converter")
@@ -36,3 +42,6 @@ copy_button = tk.Button(root, text="Copy Text", command=copy_to_clipboard)
 copy_button.pack()
 
 root.mainloop()
+
+# Made with chat gpt and kanibal
+# Use without asking
