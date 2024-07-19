@@ -1,3 +1,5 @@
+# Made with chat GPT
+
 import tkinter as tk
 from tkinter import scrolledtext
 import requests
