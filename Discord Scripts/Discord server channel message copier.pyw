@@ -5,7 +5,8 @@ from tkinter import scrolledtext
 import requests
 import time
 import threading
-import os
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 class MessageCopierApp:
     def __init__(self, root):
@@ -55,6 +56,12 @@ class MessageCopierApp:
 
         self.running = False
         self.latest_message_id = None  # Track the latest message ID
+        self.message_mapping = {}  # Map source message IDs to target message IDs
+        self.edited_messages = {}  # Track messages that have been edited
+        self.edited_message_ids = set()  # Set to keep track of edited message IDs
+        self.message_last_edit = {}  # Store the last edit timestamp of messages
+        self.processed_message_ids = set()  # Track processed message IDs
+        self.executor = ThreadPoolExecutor(max_workers=4)  # Adjust the number of threads as needed
 
     def log_message(self, message):
         self.log.insert(tk.END, message + "\n")
@@ -115,7 +122,7 @@ class MessageCopierApp:
             time.sleep(2)  # Wait before retrying
         return False
 
-    def fetch_messages(self, token, channel_id, limit=5):
+    def fetch_messages(self, token, channel_id, limit=15):
         headers = {
             'Authorization': token,
             'Content-Type': 'application/json'
@@ -142,10 +149,11 @@ class MessageCopierApp:
             self.log_message(f'Failed to fetch messages: {response.status_code} - {response.text}')
         return []
 
-    def format_message(self, token, message, source_channel_id):
+    def format_message(self, token, message, source_channel_id, is_fetched_message=False):
         user_info = message.get('author', {}).get('username', 'Unknown User')
         user_info += ' (Bot)' if message.get('author', {}).get('bot') else ' (Webhook)' if message.get('webhook_id') else ''
         
+        global_name = message.get('author', {}).get('global_name', 'Unknown Display Name')
         content = message.get('content', '')
         
         if message.get('attachments'):
@@ -155,12 +163,49 @@ class MessageCopierApp:
         # Get the channel name
         channel_name = self.get_channel_name(token, source_channel_id)
         
+        # Format the timestamp using Unix timestamp
+        timestamp = message.get('timestamp', '')
+        if timestamp:
+            # Parse the timestamp
+            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            unix_timestamp = int(dt.timestamp())
+            formatted_timestamp = f"<t:{unix_timestamp}:f>"
+        else:
+            formatted_timestamp = 'Unknown Time'
+        
         # Add the Hangul Filler character for invisible space
         invisible_character = '\u3164'
-        return f'> **User:** {user_info} | **Channel:** {channel_name}\n{content}\n{invisible_character}'
+        formatted_message = (f'> **User:** {user_info} :white_small_square: **Display:** {global_name} '
+                             f':white_small_square: **Channel:** {channel_name} :white_small_square: '
+                             f'**Timestamp:** {formatted_timestamp}\n{content}\n{invisible_character}')
+        
+        if is_fetched_message:
+            formatted_message += f' :white_small_square: **It\'s a fetched message**'
+        
+        return formatted_message
 
-    def process_message(self, token, message, target_channel_id, source_channel_id):
-        formatted_message = self.format_message(token, message, source_channel_id)
+    def send_message(self, target_url, headers, payload, source_message_id):
+        response = requests.post(target_url, headers=headers, json=payload)
+        if response.status_code == 200:
+            self.log_message(f"Successfully copied message: {payload['content']}")
+            target_message_id = response.json()['id']
+            self.message_mapping[source_message_id] = target_message_id  # Store the mapping
+            self.message_last_edit[source_message_id] = None  # Initialize the last edit timestamp
+        elif response.status_code == 429:
+            retry_after = response.json().get('retry_after', 0)
+            self.log_message(f'Rate limited. Retrying after {retry_after} seconds.')
+            time.sleep(retry_after)
+        else:
+            self.log_message(f'Failed to send message: {response.status_code} - {response.text}')
+
+    def process_message(self, token, message, target_channel_id, source_channel_id, is_fetched_message=False):
+        source_message_id = message['id']
+        
+        # Avoid processing the same message more than once
+        if source_message_id in self.processed_message_ids:
+            return
+        
+        formatted_message = self.format_message(token, message, source_channel_id, is_fetched_message)
         
         if formatted_message.strip():
             headers = {
@@ -173,59 +218,16 @@ class MessageCopierApp:
                 'tts': False
             }
             
-            # Send the message
-            response = requests.post(target_url, headers=headers, json=payload)
-            if response.status_code == 200:
-                self.log_message(f"Successfully copied message: {formatted_message}")
-            elif response.status_code == 429:
-                retry_after = response.json().get('retry_after', 0)
-                self.log_message(f'Rate limited. Retrying after {retry_after} seconds.')
-                time.sleep(retry_after)
-            else:
-                self.log_message(f'Failed to send message: {response.status_code} - {response.text}')
+            # Submit the message sending task to the executor
+            self.executor.submit(self.send_message, target_url, headers, payload, source_message_id)
+            self.processed_message_ids.add(source_message_id)
 
     def listen_for_new_messages(self, token, source_channel_id, target_channel_id):
-        headers = {
-            'Authorization': token,
-            'Content-Type': 'application/json'
-        }
-        url = f'https://discord.com/api/v9/channels/{source_channel_id}/messages'
-        
         while self.running:
-            try:
-                params = {'after': self.latest_message_id} if self.latest_message_id else {}
-                response = requests.get(url, headers=headers, params=params)
-                
-                if response.status_code == 200:
-                    messages = response.json()
-                    if messages:
-                        self.log_message(f"Fetched {len(messages)} new messages from channel.")
-                        
-                        # Reverse the messages order
-                        messages.reverse()
-                        
-                        for message in messages:
-                            self.process_message(token, message, target_channel_id, source_channel_id)
-                        
-                        # Update latest message ID after processing
-                        self.latest_message_id = messages[-1]['id']
-                    
-                elif response.status_code == 401:
-                    self.log_message('Unauthorized: Check if the token is correct and has necessary permissions.')
-                    break
-                elif response.status_code == 429:
-                    retry_after = response.json().get('retry_after', 0)
-                    self.log_message(f'Rate limited. Retrying after {retry_after} seconds.')
-                    time.sleep(retry_after)
-                else:
-                    self.log_message(f'Failed to fetch new messages: {response.status_code} - {response.text}')
-                
-                # Wait before checking for new messages
-                time.sleep(2)  # Adjusted to 2 seconds
-
-            except Exception as e:
-                self.log_message(f'Error: {str(e)}')
-                time.sleep(2)  # Wait before retrying on error
+            new_messages = self.fetch_messages(token, source_channel_id)
+            for message in new_messages:
+                self.process_message(token, message, target_channel_id, source_channel_id)
+            time.sleep(2)  # Adjust the sleep time as needed
 
     def start_copying(self):
         self.running = True
@@ -238,17 +240,20 @@ class MessageCopierApp:
             return
 
         # Fetch initial set of messages
-        self.fetch_messages(token, source_channel_id)
+        messages = self.fetch_messages(token, source_channel_id)
+        for i, message in enumerate(messages):
+            # Apply special format only to the first 15 messages
+            is_fetched_message = i < 15
+            self.process_message(token, message, target_channel_id, source_channel_id, is_fetched_message)
         
-        # Start listening for new messages
+        # Start listening for new messages and edits
         self.listener_thread = threading.Thread(target=self.listen_for_new_messages, args=(token, source_channel_id, target_channel_id))
         self.listener_thread.daemon = True
         self.listener_thread.start()
 
     def stop_copying(self):
         self.running = False
-        self.log_message("Stopped copying.")
-        if hasattr(self, 'listener_thread'):
+        if self.listener_thread and self.listener_thread.is_alive():
             self.listener_thread.join()
 
 if __name__ == "__main__":
