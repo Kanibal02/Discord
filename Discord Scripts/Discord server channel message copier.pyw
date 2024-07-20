@@ -1,3 +1,5 @@
+# made by chat gpt
+
 import tkinter as tk
 from tkinter import scrolledtext
 import requests
@@ -57,6 +59,21 @@ class MessageCopierApp:
     def log_message(self, message):
         self.log.insert(tk.END, message + "\n")
         self.log.see(tk.END)
+
+    def get_channel_name(self, token, channel_id):
+        headers = {
+            'Authorization': token,
+            'Content-Type': 'application/json'
+        }
+        url = f'https://discord.com/api/v9/channels/{channel_id}'
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            channel_data = response.json()
+            return channel_data.get('name', 'Unknown Channel')
+        else:
+            self.log_message(f'Failed to fetch channel name: {response.status_code} - {response.text}')
+            return 'Unknown Channel'
 
     def download_media(self, media_url, file_path, retries=3):
         for attempt in range(retries):
@@ -125,7 +142,7 @@ class MessageCopierApp:
             self.log_message(f'Failed to fetch messages: {response.status_code} - {response.text}')
         return []
 
-    def format_message(self, message):
+    def format_message(self, token, message, source_channel_id):
         user_info = message.get('author', {}).get('username', 'Unknown User')
         user_info += ' (Bot)' if message.get('author', {}).get('bot') else ' (Webhook)' if message.get('webhook_id') else ''
         
@@ -135,12 +152,15 @@ class MessageCopierApp:
             for attachment in message['attachments']:
                 content += f'\n[Attachment: {attachment.get("filename", "attachment")}]({attachment["url"]})'
 
+        # Get the channel name
+        channel_name = self.get_channel_name(token, source_channel_id)
+        
         # Add the Hangul Filler character for invisible space
         invisible_character = '\u3164'
-        return f'> **User:** {user_info}\n{content}\n{invisible_character}'
+        return f'> **User:** {user_info} | **Channel:** {channel_name}\n{content}\n{invisible_character}'
 
-    def process_message(self, token, message, target_channel_id):
-        formatted_message = self.format_message(message)
+    def process_message(self, token, message, target_channel_id, source_channel_id):
+        formatted_message = self.format_message(token, message, source_channel_id)
         
         if formatted_message.strip():
             headers = {
@@ -185,7 +205,7 @@ class MessageCopierApp:
                         messages.reverse()
                         
                         for message in messages:
-                            self.process_message(token, message, target_channel_id)
+                            self.process_message(token, message, target_channel_id, source_channel_id)
                         
                         # Update latest message ID after processing
                         self.latest_message_id = messages[-1]['id']
@@ -201,11 +221,11 @@ class MessageCopierApp:
                     self.log_message(f'Failed to fetch new messages: {response.status_code} - {response.text}')
                 
                 # Wait before checking for new messages
-                time.sleep(1)  # Adjusted to 1 seconds
+                time.sleep(2)  # Adjusted to 2 seconds
 
             except Exception as e:
                 self.log_message(f'Error: {str(e)}')
-                time.sleep(1)  # Wait before retrying on error
+                time.sleep(2)  # Wait before retrying on error
 
     def start_copying(self):
         self.running = True
