@@ -63,6 +63,8 @@ class MessageCopierApp:
         self.processed_message_ids = set()  # Track processed message IDs
         self.executor = ThreadPoolExecutor(max_workers=4)  # Adjust the number of threads as needed
 
+        self.message_send_interval = 0.5  # Interval between sending messages (2 messages per second)
+
     def log_message(self, message):
         self.log.insert(tk.END, message + "\n")
         self.log.see(tk.END)
@@ -122,7 +124,7 @@ class MessageCopierApp:
             time.sleep(2)  # Wait before retrying
         return False
 
-    def fetch_messages(self, token, channel_id, limit=15):
+    def fetch_messages(self, token, channel_id, limit=10):
         headers = {
             'Authorization': token,
             'Content-Type': 'application/json'
@@ -177,10 +179,12 @@ class MessageCopierApp:
         invisible_character = '\u3164'
         formatted_message = (f'> **User:** {user_info} :white_small_square: **Display:** {global_name} '
                              f':white_small_square: **Channel:** {channel_name} :white_small_square: '
-                             f'**Timestamp:** {formatted_timestamp}\n{content}\n{invisible_character}')
+                             f'**Timestamp:** {formatted_timestamp}')
         
         if is_fetched_message:
-            formatted_message += f' :white_small_square: **It\'s a fetched message**'
+            formatted_message += ' :white_small_square: **It\'s a fetched message**'
+        
+        formatted_message += f'\n{content}\n{invisible_character}'
         
         return formatted_message
 
@@ -190,7 +194,6 @@ class MessageCopierApp:
             self.log_message(f"Successfully copied message: {payload['content']}")
             target_message_id = response.json()['id']
             self.message_mapping[source_message_id] = target_message_id  # Store the mapping
-            self.message_last_edit[source_message_id] = None  # Initialize the last edit timestamp
         elif response.status_code == 429:
             retry_after = response.json().get('retry_after', 0)
             self.log_message(f'Rate limited. Retrying after {retry_after} seconds.')
@@ -221,6 +224,9 @@ class MessageCopierApp:
             # Submit the message sending task to the executor
             self.executor.submit(self.send_message, target_url, headers, payload, source_message_id)
             self.processed_message_ids.add(source_message_id)
+            
+            # Implement a delay to control the rate of sending messages
+            time.sleep(self.message_send_interval)
 
     def listen_for_new_messages(self, token, source_channel_id, target_channel_id):
         while self.running:
@@ -242,8 +248,8 @@ class MessageCopierApp:
         # Fetch initial set of messages
         messages = self.fetch_messages(token, source_channel_id)
         for i, message in enumerate(messages):
-            # Apply special format only to the first 15 messages
-            is_fetched_message = i < 15
+            # Apply special format only to the first 10 messages
+            is_fetched_message = i < 10
             self.process_message(token, message, target_channel_id, source_channel_id, is_fetched_message)
         
         # Start listening for new messages and edits
