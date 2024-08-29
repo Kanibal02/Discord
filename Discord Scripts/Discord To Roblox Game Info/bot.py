@@ -26,7 +26,7 @@ def read_token(file_path):
 
 # Read the token from token.txt
 DISCORD_TOKEN = read_token('token.txt')
-CHANNEL_ID = 1253389437069557840  # Replace with your Discord channel ID
+CHANNEL_ID = 1234  # Replace with your Discord channel ID
 UNIVERSE_IDS = [
     'Add an universe id, not game id, if you dont know how to get it, check on the internet!',
     # 'ANOTHER_UNIVERSE_ID',
