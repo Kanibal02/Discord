@@ -26,20 +26,23 @@ def read_token(file_path):
 
 # Read the token from token.txt
 DISCORD_TOKEN = read_token('token.txt')
-CHANNEL_ID = 1234  # Replace with your Discord channel ID
-UNIVERSE_IDS = [
-    'Add an universe id, not game id, if you dont know how to get it, check on the internet!',
-    # 'ANOTHER_UNIVERSE_ID',
-]
+
+# Dictionary to store channel-specific universe IDs
+CHANNEL_UNIVERSE_IDS = {
+    123: ['', ''],
+    123: ['', '', ''],
+    123: ['']
+    # (your discord chnanel id): ['roblox universe id', 'other one']
+}
 
 # Initialize bot
 intents = discord.Intents.default()
 intents.message_content = True  # Ensure message content intent is enabled
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-def get_game_data():
-    """Fetch game data from Roblox API."""
-    url = f'https://games.roblox.com/v1/games?universeIds={",".join(UNIVERSE_IDS)}'
+def get_game_data(universe_ids):
+    """Fetch game data from Roblox API for the specific universe IDs."""
+    url = f'https://games.roblox.com/v1/games?universeIds={",".join(universe_ids)}'
     response = requests.get(url)
     return response.json()
 
@@ -59,11 +62,19 @@ def get_polish_time():
 
 async def update_discord_message(channel, message_id=None):
     """Update the message with game information."""
-    data = get_game_data()
+    # Get the universe IDs for this channel
+    universe_ids = CHANNEL_UNIVERSE_IDS.get(channel.id)
+    
+    if not universe_ids:
+        await channel.send("No universe IDs configured for this channel.")
+        return
+    
+    # Fetch game data for the universe IDs in this channel
+    data = get_game_data(universe_ids)
     
     embeds = []
-    padding = "ㅤ" * 35  # 25 instances of the character to pad the title
-    
+    padding = "ㅤ" * 35  # Padding for the title
+
     for game in data.get('data', []):
         updated_timestamp = convert_to_unix(game.get('updated'))
         
@@ -106,35 +117,20 @@ async def update_discord_message(channel, message_id=None):
         for embed in embeds:
             await channel.send(embed=embed)
 
-
-    # Send or edit the message with the embed(s)
-    if message_id:
-        try:
-            message = await channel.fetch_message(message_id)
-            if len(embeds) == 1:
-                await message.edit(embed=embeds[0])  # Single embed case
-            else:
-                await message.edit(content=None, embeds=embeds)  # Multiple embeds case
-        except discord.NotFound:
-            for embed in embeds:
-                await channel.send(embed=embed)
-    else:
-        for embed in embeds:
-            await channel.send(embed=embed)
-
-
 @bot.event
 async def on_ready():
     """Event that runs when the bot is ready."""
     print(f'Logged in as {bot.user}')
-    channel = bot.get_channel(CHANNEL_ID)
     
-    # Fetch the most recent message or send a new one
-    async for message in channel.history(limit=10):
-        await update_discord_message(channel, message.id)
-        break
-    else:
-        await channel.send("Fetching game data...")
+    for channel_id in CHANNEL_UNIVERSE_IDS:
+        channel = bot.get_channel(channel_id)
+        
+        # Fetch the most recent message or send a new one
+        async for message in channel.history(limit=10):
+            await update_discord_message(channel, message.id)
+            break
+        else:
+            await channel.send("Fetching game data...")
 
     # Start the periodic updates
     periodic_update.start()
@@ -151,11 +147,12 @@ async def on_message(message):
 @tasks.loop(minutes=1)
 async def periodic_update():
     """Periodic task to update the game information."""
-    channel = bot.get_channel(CHANNEL_ID)
-    if channel.last_message_id:
-        await update_discord_message(channel, channel.last_message_id)
-    else:
-        await update_discord_message(channel)
+    for channel_id in CHANNEL_UNIVERSE_IDS:
+        channel = bot.get_channel(channel_id)
+        if channel.last_message_id:
+            await update_discord_message(channel, channel.last_message_id)
+        else:
+            await update_discord_message(channel)
 
 # Run the bot
 bot.run(DISCORD_TOKEN)
