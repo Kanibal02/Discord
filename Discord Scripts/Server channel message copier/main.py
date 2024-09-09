@@ -79,7 +79,7 @@ async def get_channel_name(token, channel_id):
     
     url = f'https://discord.com/api/v10/channels/{channel_id}'
     headers = {
-        'Authorization': token
+        'Authorization': token  # Prefix token with 'Bot '
     }
     try:
         response = requests.get(url, headers=headers)
@@ -96,10 +96,11 @@ async def get_channel_name(token, channel_id):
 # Function to handle WebSocket connection
 async def handle_websocket(token, configurations):
     url = 'wss://gateway.discord.gg/?v=10&encoding=json'
+    
     while True:  # Loop to handle reconnections
         try:
             async with websockets.connect(url) as ws:
-                logger.info("Websocket connection established")
+                logger.info("WebSocket connection established")
 
                 # Authenticate with the Discord API
                 payload = {
@@ -117,7 +118,7 @@ async def handle_websocket(token, configurations):
                 logger.info("Authentication payload sent")
 
                 heartbeat_interval = None
-                next_heartbeat = time.time() + 30  # Initialize to send first heartbeat after 30 seconds
+                next_heartbeat = time.time() + 40  # Initialize to send first heartbeat after 40 seconds
 
                 while True:
                     try:
@@ -151,7 +152,7 @@ async def handle_websocket(token, configurations):
                                     formatted_timestamp2 = 'Unknown Time'
 
                                 invisible_character = '\u3164'
-                                formatted_message = (f'> **User:** {user_info} :white_small_square: **Display:** {global_name} '
+                                formatted_message = (f'> **Display Name:** {global_name} :white_small_square: **Username:** {user_info} '
                                                     f':white_small_square: **Channel:** {channel_name} :white_small_square: '
                                                     f'**Timestamp:** {formatted_timestamp} {formatted_timestamp2}\n{content}\n{invisible_character}')
 
@@ -159,11 +160,11 @@ async def handle_websocket(token, configurations):
                                 send_to_webhook(config['target_channel_webhook'], formatted_message)
 
                         elif event.get('t') == 'READY':
-                            heartbeat_interval = event['d'].get('heartbeat_interval') / 1000 if 'heartbeat_interval' in event['d'] else 30  # Default to 30s
+                            heartbeat_interval = event['d'].get('heartbeat_interval') / 1000 if 'heartbeat_interval' in event['d'] else 40  # Default to 40s
                             logger.info(f"Heartbeat interval received: {heartbeat_interval} seconds")
 
                         elif event.get('t') == 'HELLO':
-                            heartbeat_interval = event['d'].get('heartbeat_interval') / 1000 if 'heartbeat_interval' in event['d'] else 30  # Default to 30s
+                            heartbeat_interval = event['d'].get('heartbeat_interval') / 1000 if 'heartbeat_interval' in event['d'] else 40  # Default to 40s
                             next_heartbeat = time.time() + heartbeat_interval
                             logger.info(f"Hello event received, setting heartbeat interval to {heartbeat_interval} seconds")
 
@@ -178,15 +179,15 @@ async def handle_websocket(token, configurations):
                             next_heartbeat = time.time() + heartbeat_interval
 
                     except websockets.ConnectionClosed as e:
-                        logger.error(f"Websocket connection closed: {e}")
+                        logger.error(f"WebSocket connection closed: {e}")
                         break
                     except Exception as e:
-                        logger.error(f"Error handling websocket message: {e}")
+                        logger.error(f"Error handling WebSocket message: {e}")
 
         except Exception as e:
-            logger.error(f"Error establishing websocket connection: {e}")
+            logger.error(f"Error establishing WebSocket connection: {e}")
             logger.info("Reconnecting in 5 seconds...")
-            time.sleep(5)  # Wait before retrying to reconnect
+            await asyncio.sleep(5)  # Wait before retrying to reconnect
 
 if __name__ == "__main__":
     try:
