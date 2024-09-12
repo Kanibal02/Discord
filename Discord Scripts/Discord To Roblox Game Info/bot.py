@@ -1,9 +1,19 @@
+# Made with chat gpt, and roblox apis.
+
 import discord
 import requests
 import asyncio
 from discord.ext import tasks, commands
 from datetime import datetime
 import pytz  # Import pytz for timezone handling
+
+# Dictionary to store channel-specific universe IDs
+CHANNEL_UNIVERSE_IDS = {
+    123: ['', ''],
+    123: ['', '', ''],
+    123: ['']
+    # (your discord chnanel id): ['roblox universe id', 'other one']
+}
 
 # Function to read the token from a file
 def read_token(file_path):
@@ -27,21 +37,13 @@ def read_token(file_path):
 # Read the token from token.txt
 DISCORD_TOKEN = read_token('token.txt')
 
-# Dictionary to store channel-specific universe IDs
-CHANNEL_UNIVERSE_IDS = {
-    123: ['', ''],
-    123: ['', '', ''],
-    123: ['']
-    # (your discord chnanel id): ['roblox universe id', 'other one']
-}
-
 # Initialize bot
 intents = discord.Intents.default()
 intents.message_content = True  # Ensure message content intent is enabled
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 def get_game_data(universe_ids):
-    """Fetch game data from Roblox API for the specific universe IDs."""
+    """Fetch game data from Roblox API for specific universe IDs."""
     url = f'https://games.roblox.com/v1/games?universeIds={",".join(universe_ids)}'
     response = requests.get(url)
     return response.json()
@@ -60,30 +62,47 @@ def get_polish_time():
     tz = pytz.timezone('Europe/Warsaw')
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
+def fetch_image_url(place_id):
+    """Fetch the image URL for a game based on placeId."""
+    url = f'https://thumbnails.roblox.com/v1/places/gameicons?placeIds={place_id}&returnPolicy=PlaceHolder&size=512x512&format=Png&isCircular=false'
+    response = requests.get(url)
+    
+    if response.status_code == 200:
+        data = response.json()
+        if "data" in data and len(data["data"]) > 0 and "imageUrl" in data["data"][0]:
+            return data["data"][0]["imageUrl"]
+        else:
+            print("imageUrl not found in the response")
+            return None
+    else:
+        print(f"Failed to fetch data. Status code: {response.status_code}")
+        return None
+
 async def update_discord_message(channel, message_id=None):
     """Update the message with game information."""
-    # Get the universe IDs for this channel
+    # Get the universe IDs for the channel
     universe_ids = CHANNEL_UNIVERSE_IDS.get(channel.id)
     
     if not universe_ids:
-        await channel.send("No universe IDs configured for this channel.")
+        print(f"No universe IDs found for channel {channel.id}")
         return
     
-    # Fetch game data for the universe IDs in this channel
     data = get_game_data(universe_ids)
     
     embeds = []
-    padding = "ㅤ" * 35  # Padding for the title
-
+    
     for game in data.get('data', []):
         updated_timestamp = convert_to_unix(game.get('updated'))
         
-        # Prepare the padded game title
-        name = game.get('name') + padding
+        # Prepare the game details
+        name = game.get('name')
         playing = format_number(game.get('playing'))
         visits = format_number(game.get('visits'))
         favorites = format_number(game.get('favoritedCount'))
-        game_link = f"[Click Me](https://www.roblox.com/games/{game.get('rootPlaceId')}/)"
+        game_link = f"https://www.roblox.com/games/{game.get('rootPlaceId')}/"
+        
+        # Fetch the thumbnail for the game
+        thumbnail_url = fetch_image_url(game.get('rootPlaceId'))
         
         # Create an embed for each game
         embed = discord.Embed(
@@ -91,11 +110,13 @@ async def update_discord_message(channel, message_id=None):
             color=discord.Color.blue()
         )
         
-        embed.add_field(name="Current Player Count", value=f"**{playing}**", inline=False)
-        embed.add_field(name="Visits", value=visits, inline=False)
-        embed.add_field(name="Favorites", value=favorites, inline=False)
-        embed.add_field(name="Last Updated", value=f"<t:{updated_timestamp}:R>", inline=False)
-        embed.add_field(name="Game Link", value=game_link, inline=False)
+        embed.add_field(
+            name="Game Info",
+            value=f"Current Playing: **{playing}**\nVisits: **{visits}**\nFavorites: **{favorites}**\n\nLast Updated: <t:{updated_timestamp}:R>",
+            inline=False
+        )
+        embed.set_thumbnail(url=thumbnail_url)
+        embed.set_footer(text=game_link)
         
         embeds.append(embed)
         
@@ -117,23 +138,26 @@ async def update_discord_message(channel, message_id=None):
         for embed in embeds:
             await channel.send(embed=embed)
 
+
 @bot.event
 async def on_ready():
     """Event that runs when the bot is ready."""
     print(f'Logged in as {bot.user}')
     
-    for channel_id in CHANNEL_UNIVERSE_IDS:
+    # Iterate over all channels in the dictionary
+    for channel_id in CHANNEL_UNIVERSE_IDS.keys():
         channel = bot.get_channel(channel_id)
         
         # Fetch the most recent message or send a new one
         async for message in channel.history(limit=10):
             await update_discord_message(channel, message.id)
             break
-        else:
-            await channel.send("Fetching game data...")
 
-    # Start the periodic updates
-    periodic_update.start()
+    # Start the periodic updates only if it's not already running
+    if not periodic_update.is_running():
+        periodic_update.start()
+
+
 
 @bot.event
 async def on_message(message):
@@ -147,7 +171,7 @@ async def on_message(message):
 @tasks.loop(minutes=1)
 async def periodic_update():
     """Periodic task to update the game information."""
-    for channel_id in CHANNEL_UNIVERSE_IDS:
+    for channel_id in CHANNEL_UNIVERSE_IDS.keys():
         channel = bot.get_channel(channel_id)
         if channel.last_message_id:
             await update_discord_message(channel, channel.last_message_id)
