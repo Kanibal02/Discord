@@ -1,8 +1,11 @@
-# Made with chat gpt, and roblox apis.
+# Created with chat gpt and roblox apis
+# You don't need to login into anything, other than needing Universe ids, and Your Discord BOT token
 
 import discord
 import requests
 import asyncio
+import logging
+import os
 from discord.ext import tasks, commands
 from datetime import datetime
 import pytz  # Import pytz for timezone handling
@@ -15,6 +18,47 @@ CHANNEL_UNIVERSE_IDS = {
     # (your discord chnanel id): ['roblox universe id', 'other one']
 }
 
+class PolishTimezoneFormatter(logging.Formatter):
+    """Custom formatter to set the timezone to Polish time (CET/CEST)."""
+
+    def formatTime(self, record, datefmt=None):
+        # Set the timezone to Polish time
+        polish_timezone = pytz.timezone('Europe/Warsaw')
+        dt = datetime.fromtimestamp(record.created, tz=polish_timezone)
+
+        if datefmt:
+            return dt.strftime(datefmt)
+        else:
+            return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+def get_next_log_filename(base_name="logs", extension=".txt"):
+    """Finds the next available log filename."""
+    i = 1
+    while True:
+        filename = f"{base_name}{i}{extension}"
+        if not os.path.exists(filename):
+            return filename
+        i += 1
+
+# Set up logging with the next available log filename
+log_filename = get_next_log_filename()
+logging.basicConfig(
+    level=logging.INFO,
+    format='[{asctime}]: {message}',
+    style='{',
+    handlers=[
+        logging.FileHandler(log_filename, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+
+# Create a formatter that uses Polish time
+polish_formatter = PolishTimezoneFormatter('[{asctime}]: {message}', style='{')
+
+# Apply the formatter to all the handlers
+for handler in logging.getLogger().handlers:
+    handler.setFormatter(polish_formatter)
+
 # Function to read the token from a file
 def read_token(file_path):
     """Read the Discord bot token from a file."""
@@ -22,10 +66,10 @@ def read_token(file_path):
         with open(file_path, 'r') as file:
             token = file.read().strip()
     except FileNotFoundError:
-        print(f"{file_path} not found.")
+        logging.warning(f"{file_path} not found.")
         raise
     except IOError as e:
-        print(f"Error reading {file_path}: {e}")
+        logging.error(f"Error reading {file_path}: {e}")
         raise
 
     if not token:
@@ -57,10 +101,15 @@ def convert_to_unix(timestamp):
     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     return int(dt.timestamp())
 
+# Function to get current time in Polish timezone
 def get_polish_time():
-    """Get the current time in Polish time zone."""
     tz = pytz.timezone('Europe/Warsaw')
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+
+# Custom log message function with Polish time
+def log_message(message):
+    timestamp = get_polish_time()
+    logging.info(f"[{timestamp}]: {message}")
 
 def fetch_image_url(place_id):
     """Fetch the image URL for a game based on placeId."""
@@ -72,10 +121,10 @@ def fetch_image_url(place_id):
         if "data" in data and len(data["data"]) > 0 and "imageUrl" in data["data"][0]:
             return data["data"][0]["imageUrl"]
         else:
-            print("imageUrl not found in the response")
+            logging.warning("imageUrl not found in the response")
             return None
     else:
-        print(f"Failed to fetch data. Status code: {response.status_code}")
+        logging.warning(f"Failed to fetch data. Status code: {response.status_code}")
         return None
 
 async def update_discord_message(channel, message_id=None):
@@ -84,7 +133,7 @@ async def update_discord_message(channel, message_id=None):
     universe_ids = CHANNEL_UNIVERSE_IDS.get(channel.id)
     
     if not universe_ids:
-        print(f"No universe IDs found for channel {channel.id}")
+        logging.warning(f"No universe IDs found for channel {channel.id}")
         return
     
     data = get_game_data(universe_ids)
@@ -121,7 +170,7 @@ async def update_discord_message(channel, message_id=None):
         embeds.append(embed)
         
         # Print statement with timestamp
-        print(f"Successfully fetched information from Roblox to Discord. Time: {get_polish_time()}")
+        logging.info(f"Successfully fetched information from Roblox to Discord. Time: {get_polish_time()}")
 
     # Send or edit the message with the embed(s)
     if message_id:
@@ -142,7 +191,7 @@ async def update_discord_message(channel, message_id=None):
 @bot.event
 async def on_ready():
     """Event that runs when the bot is ready."""
-    print(f'Logged in as {bot.user}')
+    logging.info(f'Logged in as {bot.user}')
     
     # Iterate over all channels in the dictionary
     for channel_id in CHANNEL_UNIVERSE_IDS.keys():
@@ -168,15 +217,22 @@ async def on_message(message):
         channel = message.channel
         await update_discord_message(channel, message.id)
 
-@tasks.loop(minutes=1)
+# Inside your periodic_update task, replace print with log_message
+@tasks.loop(seconds=30)
 async def periodic_update():
     """Periodic task to update the game information."""
     for channel_id in CHANNEL_UNIVERSE_IDS.keys():
         channel = bot.get_channel(channel_id)
-        if channel.last_message_id:
-            await update_discord_message(channel, channel.last_message_id)
-        else:
-            await update_discord_message(channel)
+        try:
+            if channel.last_message_id:
+                await update_discord_message(channel, channel.last_message_id)
+            else:
+                await update_discord_message(channel)
+        except Exception as e:
+            logging.error(f"An error occurred: {e}")
+            logging.warning("Retrying in 1 minute...")
+            await asyncio.sleep(60)  # Wait for 1 minute before retrying
+            continue  # Retry the loop
 
 # Run the bot
 bot.run(DISCORD_TOKEN)
